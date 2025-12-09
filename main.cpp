@@ -1,57 +1,355 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
+#include <map>
 #include <string>
 #include <algorithm>
 #include <iomanip>
 #include <cmath>
 
-// ========== 1. Data Structures ==========
-
 // Order structure
 struct Order {
-    long long timestamp;      // Timestamp
-    long long order_id;       // Order ID
-    double price;        // Price
-    long long volume;         // Volume
-    char direction;      // 'B' = Buy / 'S' = Sell
-    char type;           // 'A' = Add / 'C' = Cancel
+    long long clockatarrival;
+    int sequenceno;
+    long long transacttime;
+    int applseqnum;
+    int side;                // 1=buy, 2=sell
+    char ordertype;          // '1'=market, '2'=limit, 'u'=best
+    double price;
+    int orderqty;
 };
 
 // Trade structure
 struct Trade {
-    long long timestamp;      // Timestamp
-    double price;        // Trade price
-    long long volume;         // Trade volume
-    long long bid_order_id;   // Buyer order ID
-    long long ask_order_id;   // Seller order ID
-    char direction;      // 'B' = Buyer initiated / 'S' = Seller initiated
+    long long clockatarrival;
+    int sequenceno;
+    long long transacttime;
+    int applseqnum;
+    char exectype;           // 'f'=filled, '4'=cancelled
+    double tradeprice;
+    int tradeqty;
+    double trademoney;
+    int bidapplseqnum;
+    int offerapplseqnum;
 };
 
-// Order book level structure
-struct OrderBookLevel {
-    double price;        // Price
-    long long total_volume;   // Total volume at this price level
-    std::vector<long long> order_ids;  // All order IDs at this price level
+// Order book snapshot structure
+struct BookSnapshot {
+    long long clockatarrival;
+    long long transacttime;
+    std::vector<std::pair<double, int> > best_bids;
+    std::vector<std::pair<double, int> > best_asks;
+    std::vector<std::pair<double, int> > worst_bids;
+    std::vector<std::pair<double, int> > worst_asks;
+    
+    // Additional market statistics
+    long long cvl;          // Cumulative Volume: total traded volume
+    double lpr;             // Last Price: most recent trade price
+    int cto;                // Cumulative Trade Orders: total number of orders that traded
+    int nts;                // Number of Trades: total number of trades executed
+    double opx;             // Opening Price: first trade price of the session
 };
 
-// ========== 2. Global Data Storage ==========
+// Order in book
+struct BookOrder {
+    int applseqnum;
+    double price;
+    int qty;
+    long long order_time;
+};
 
-std::vector<Order> all_orders;    // All order data
-std::vector<Trade> all_trades;    // All trade data
+// Order book structure
+struct OrderBook {
+    std::map<int, BookOrder> bids;
+    std::map<int, BookOrder> asks;
+    std::vector<BookSnapshot> snapshots;
+    
+    // Market statistics
+    long long cumulative_volume;
+    double last_price;
+    int cumulative_trade_orders;
+    int number_of_trades;
+    double opening_price;
+    bool has_opening_price;
+};
 
-// Currently active orders (for quick lookup)
-std::vector<Order> active_orders; // Unfilled orders
+// Event structure
+struct Event {
+    std::string type;
+    long long time;
+    int index;
+};
 
-// Order book data
-std::vector<OrderBookLevel> bid_levels;  // Buy side
-std::vector<OrderBookLevel> ask_levels;  // Sell side
+// Initialize order book
+void init_orderbook(OrderBook& book) {
+    book.cumulative_volume = 0;
+    book.last_price = 0.0;
+    book.cumulative_trade_orders = 0;
+    book.number_of_trades = 0;
+    book.opening_price = 0.0;
+    book.has_opening_price = false;
+}
 
-// ========== 3. File Reading Functions ==========
+// Get best bid price
+double get_best_bid_price(const OrderBook& book) {
+    if (book.bids.empty()) return 0;
+    double best = 0;
+    
+    std::map<int, BookOrder>::const_iterator it;
+    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
+        if (it->second.price > best) {
+            best = it->second.price;
+        }
+    }
+    return best;
+}
 
-// Read order file
-void read_order_file(const std::string& filename) {
-    std::ifstream file(filename);
+// Get best ask price
+double get_best_ask_price(const OrderBook& book) {
+    if (book.asks.empty()) return 0;
+    double best = 1e9;
+    
+    std::map<int, BookOrder>::const_iterator it;
+    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
+        if (it->second.price < best) {
+            best = it->second.price;
+        }
+    }
+    return best == 1e9 ? 0 : best;
+}
+
+// Add order to book
+void add_order(OrderBook& book, const Order& order) {
+    if (order.orderqty <= 0) return;
+    
+    BookOrder book_order;
+    book_order.applseqnum = order.applseqnum;
+    book_order.price = order.price;
+    book_order.qty = order.orderqty;
+    book_order.order_time = order.transacttime;
+    
+    // Handle market and best orders
+    if (order.ordertype == '1') {  // Market order
+        if (order.side == 1) {  // Buy: use best ask
+            double best_ask = get_best_ask_price(book);
+            if (best_ask > 0) {
+                book_order.price = best_ask;
+            } else {
+                return;
+            }
+        } else {  // Sell: use best bid
+            double best_bid = get_best_bid_price(book);
+            if (best_bid > 0) {
+                book_order.price = best_bid;
+            } else {
+                return;
+            }
+        }
+    } else if (order.ordertype == 'u') {  // Best order
+        if (order.side == 1) {  // Buy: use current best bid
+            double best_bid = get_best_bid_price(book);
+            if (best_bid > 0) {
+                book_order.price = best_bid;
+            } else {
+                return;
+            }
+        } else {  // Sell: use current best ask
+            double best_ask = get_best_ask_price(book);
+            if (best_ask > 0) {
+                book_order.price = best_ask;
+            } else {
+                return;
+            }
+        }
+    }
+    
+    // Add to order book
+    if (order.side == 1) {
+        book.bids[order.applseqnum] = book_order;
+    } else {
+        book.asks[order.applseqnum] = book_order;
+    }
+}
+
+// Execute trade
+void execute_trade(OrderBook& book, const Trade& trade) {
+    if (trade.exectype == 'f') {  // Filled
+        // Update market statistics
+        book.cumulative_volume += trade.tradeqty;
+        book.last_price = trade.tradeprice;
+        book.number_of_trades++;
+        
+        // Set opening price if this is the first trade
+        if (!book.has_opening_price) {
+            book.opening_price = trade.tradeprice;
+            book.has_opening_price = true;
+        }
+        
+        // Track orders that participated in trade
+        if (trade.bidapplseqnum != 0) {
+            book.cumulative_trade_orders++;
+        }
+        if (trade.offerapplseqnum != 0) {
+            book.cumulative_trade_orders++;
+        }
+        
+        // Update order book
+        if (trade.bidapplseqnum != 0) {
+            std::map<int, BookOrder>::iterator it = book.bids.find(trade.bidapplseqnum);
+            if (it != book.bids.end()) {
+                it->second.qty -= trade.tradeqty;
+                if (it->second.qty <= 0) {
+                    book.bids.erase(it);
+                }
+            }
+        }
+        
+        if (trade.offerapplseqnum != 0) {
+            std::map<int, BookOrder>::iterator it = book.asks.find(trade.offerapplseqnum);
+            if (it != book.asks.end()) {
+                it->second.qty -= trade.tradeqty;
+                if (it->second.qty <= 0) {
+                    book.asks.erase(it);
+                }
+            }
+        }
+    } else if (trade.exectype == '4') {  // Cancelled
+        if (trade.bidapplseqnum != 0) {
+            book.bids.erase(trade.bidapplseqnum);
+        }
+        if (trade.offerapplseqnum != 0) {
+            book.asks.erase(trade.offerapplseqnum);
+        }
+    }
+}
+
+// Comparison function for sorting bids (high to low)
+bool compare_bids_desc(const std::pair<double, int>& a, const std::pair<double, int>& b) {
+    return a.first > b.first;
+}
+
+// Comparison function for sorting asks (low to high)
+bool compare_asks_asc(const std::pair<double, int>& a, const std::pair<double, int>& b) {
+    return a.first < b.first;
+}
+
+// Get top bids
+std::vector<std::pair<double, int> > get_top_bids(const OrderBook& book, int n) {
+    std::map<double, int> price_levels;
+    std::map<int, BookOrder>::const_iterator it;
+    
+    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
+        price_levels[it->second.price] += it->second.qty;
+    }
+    
+    std::vector<std::pair<double, int> > result;
+    std::map<double, int>::iterator level_it;
+    for (level_it = price_levels.begin(); level_it != price_levels.end(); ++level_it) {
+        result.push_back(*level_it);
+    }
+    
+    std::sort(result.begin(), result.end(), compare_bids_desc);
+    
+    if (result.size() > (size_t)n) {
+        result.resize(n);
+    }
+    return result;
+}
+
+// Get top asks
+std::vector<std::pair<double, int> > get_top_asks(const OrderBook& book, int n) {
+    std::map<double, int> price_levels;
+    std::map<int, BookOrder>::const_iterator it;
+    
+    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
+        price_levels[it->second.price] += it->second.qty;
+    }
+    
+    std::vector<std::pair<double, int> > result;
+    std::map<double, int>::iterator level_it;
+    for (level_it = price_levels.begin(); level_it != price_levels.end(); ++level_it) {
+        result.push_back(*level_it);
+    }
+    
+    std::sort(result.begin(), result.end(), compare_asks_asc);
+    
+    if (result.size() > (size_t)n) {
+        result.resize(n);
+    }
+    return result;
+}
+
+// Get bottom bids (lowest prices)
+std::vector<std::pair<double, int> > get_bottom_bids(const OrderBook& book, int n) {
+    std::map<double, int> price_levels;
+    std::map<int, BookOrder>::const_iterator it;
+    
+    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
+        price_levels[it->second.price] += it->second.qty;
+    }
+    
+    std::vector<std::pair<double, int> > result;
+    std::map<double, int>::iterator level_it;
+    for (level_it = price_levels.begin(); level_it != price_levels.end(); ++level_it) {
+        result.push_back(*level_it);
+    }
+    
+    std::sort(result.begin(), result.end(), compare_asks_asc);  // Low to high
+    
+    if (result.size() > (size_t)n) {
+        result.resize(n);
+    }
+    return result;
+}
+
+// Get bottom asks (highest prices)
+std::vector<std::pair<double, int> > get_bottom_asks(const OrderBook& book, int n) {
+    std::map<double, int> price_levels;
+    std::map<int, BookOrder>::const_iterator it;
+    
+    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
+        price_levels[it->second.price] += it->second.qty;
+    }
+    
+    std::vector<std::pair<double, int> > result;
+    std::map<double, int>::iterator level_it;
+    for (level_it = price_levels.begin(); level_it != price_levels.end(); ++level_it) {
+        result.push_back(*level_it);
+    }
+    
+    std::sort(result.begin(), result.end(), compare_bids_desc);  // High to low
+    
+    if (result.size() > (size_t)n) {
+        result.resize(n);
+    }
+    return result;
+}
+
+// Take snapshot
+void take_snapshot(OrderBook& book, long long clockatarrival, long long transacttime) {
+    BookSnapshot snapshot;
+    snapshot.clockatarrival = clockatarrival;
+    snapshot.transacttime = transacttime;
+    snapshot.best_bids = get_top_bids(book, 5);
+    snapshot.best_asks = get_top_asks(book, 5);
+    snapshot.worst_bids = get_bottom_bids(book, 5);
+    snapshot.worst_asks = get_bottom_asks(book, 5);
+    
+    // Add market statistics
+    snapshot.cvl = book.cumulative_volume;
+    snapshot.lpr = book.last_price;
+    snapshot.cto = book.cumulative_trade_orders;
+    snapshot.nts = book.number_of_trades;
+    snapshot.opx = book.opening_price;
+    
+    book.snapshots.push_back(snapshot);
+}
+
+// Read orders
+void read_order_file(const std::string& filename, std::vector<Order>& orders) {
+    std::ifstream file(filename.c_str());
+    
     if (!file.is_open()) {
         std::cout << "Cannot open file: " << filename << std::endl;
         return;
@@ -64,15 +362,15 @@ void read_order_file(const std::string& filename) {
     int line_num = 1;
     while (std::getline(file, line)) {
         line_num++;
-        if (line.empty()) continue;  // Skip empty lines
+        if (line.empty()) continue;
         
         try {
-            // Simple CSV parsing
             std::vector<std::string> fields;
             std::string field = "";
             
-            for (char c : line) {
-                if (c == ',' || c == '\r') {  // Handle both comma and carriage return
+            for (size_t i = 0; i < line.length(); i++) {
+                char c = line[i];
+                if (c == ',' || c == '\r') {
                     if (c == ',') {
                         fields.push_back(field);
                         field = "";
@@ -83,16 +381,18 @@ void read_order_file(const std::string& filename) {
             }
             fields.push_back(field);  // Last field
             
-            if (fields.size() >= 6) {
+            if (fields.size() >= 8) {
                 Order order;
-                order.timestamp = std::stoll(fields[0]);
-                order.order_id = std::stoll(fields[1]);
-                order.price = std::stod(fields[2]);
-                order.volume = std::stoll(fields[3]);
-                order.direction = fields[4][0];
-                order.type = fields[5][0];
+                order.clockatarrival = std::atoll(fields[0].c_str());
+                order.sequenceno = std::atoi(fields[1].c_str());
+                order.transacttime = std::atoll(fields[2].c_str());
+                order.applseqnum = std::atoi(fields[3].c_str());
+                order.side = std::atoi(fields[4].c_str());
+                order.ordertype = fields[5][0];
+                order.price = std::atof(fields[6].c_str());
+                order.orderqty = std::atoi(fields[7].c_str());
                 
-                all_orders.push_back(order);
+                orders.push_back(order);
             } else {
                 std::cout << "Warning: Line " << line_num << " has only " << fields.size() << " fields" << std::endl;
             }
@@ -103,12 +403,13 @@ void read_order_file(const std::string& filename) {
     }
     
     file.close();
-    std::cout << "Read " << all_orders.size() << " orders" << std::endl;
+    std::cout << "Read " << orders.size() << " orders" << std::endl;
 }
 
-// Read trade file
-void read_trade_file(const std::string& filename) {
-    std::ifstream file(filename);
+// Read trades
+void read_trade_file(const std::string& filename, std::vector<Trade>& trades) {
+    std::ifstream file(filename.c_str());
+    
     if (!file.is_open()) {
         std::cout << "Cannot open file: " << filename << std::endl;
         return;
@@ -121,14 +422,15 @@ void read_trade_file(const std::string& filename) {
     int line_num = 1;
     while (std::getline(file, line)) {
         line_num++;
-        if (line.empty()) continue;  // Skip empty lines
+        if (line.empty()) continue;
         
         try {
             std::vector<std::string> fields;
             std::string field = "";
             
-            for (char c : line) {
-                if (c == ',' || c == '\r') {  // Handle both comma and carriage return
+            for (size_t i = 0; i < line.length(); i++) {
+                char c = line[i];
+                if (c == ',' || c == '\r') {
                     if (c == ',') {
                         fields.push_back(field);
                         field = "";
@@ -137,18 +439,22 @@ void read_trade_file(const std::string& filename) {
                     field += c;
                 }
             }
-            fields.push_back(field);
+            fields.push_back(field);  // Last field
             
-            if (fields.size() >= 6) {
+            if (fields.size() >= 10) {
                 Trade trade;
-                trade.timestamp = std::stoll(fields[0]);
-                trade.price = std::stod(fields[1]);
-                trade.volume = std::stoll(fields[2]);
-                trade.bid_order_id = std::stoll(fields[3]);
-                trade.ask_order_id = std::stoll(fields[4]);
-                trade.direction = fields[5][0];
+                trade.clockatarrival = std::atoll(fields[0].c_str());
+                trade.sequenceno = std::atoi(fields[1].c_str());
+                trade.transacttime = std::atoll(fields[2].c_str());
+                trade.applseqnum = std::atoi(fields[3].c_str());
+                trade.exectype = fields[4][0];
+                trade.tradeprice = std::atof(fields[5].c_str());
+                trade.tradeqty = std::atoi(fields[6].c_str());
+                trade.trademoney = std::atof(fields[7].c_str());
+                trade.bidapplseqnum = std::atoi(fields[8].c_str());
+                trade.offerapplseqnum = std::atoi(fields[9].c_str());
                 
-                all_trades.push_back(trade);
+                trades.push_back(trade);
             } else {
                 std::cout << "Warning: Line " << line_num << " has only " << fields.size() << " fields" << std::endl;
             }
@@ -159,386 +465,220 @@ void read_trade_file(const std::string& filename) {
     }
     
     file.close();
-    std::cout << "Read " << all_trades.size() << " trades" << std::endl;
+    std::cout << "Read " << trades.size() << " trades" << std::endl;
 }
 
-// ========== 4. Order Processing Functions ==========
-
-// Find order by ID
-int find_active_order(long long order_id) {
-    for (int i = 0; i < active_orders.size(); i++) {
-        if (active_orders[i].order_id == order_id) {
-            return i;  // Return index
-        }
-    }
-    return -1;  // Not found
+// Comparison function for sorting events
+bool compare_events(const Event& a, const Event& b) {
+    if (a.time != b.time) return a.time < b.time;
+    return a.type == "order" && b.type == "trade";
 }
 
-// Find bid level
-int find_bid_level(double price) {
-    for (int i = 0; i < bid_levels.size(); i++) {
-        // Price equality (considering floating point error)
-        if (std::abs(bid_levels[i].price - price) < 0.0001) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// Find ask level
-int find_ask_level(double price) {
-    for (int i = 0; i < ask_levels.size(); i++) {
-        if (std::abs(ask_levels[i].price - price) < 0.0001) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// Process new order
-void process_new_order(const Order& order) {
-    // 1. Add to active orders list
-    active_orders.push_back(order);
+// Process events
+void process_events(const std::vector<Order>& orders, 
+                   const std::vector<Trade>& trades,
+                   const std::string& output_file) {
+    OrderBook book;
+    init_orderbook(book);
     
-    // 2. Update order book
-    if (order.direction == 'B') {  // Buy order
-        int level_idx = find_bid_level(order.price);
-        
-        if (level_idx >= 0) {
-            // Price level exists, add volume
-            bid_levels[level_idx].total_volume += order.volume;
-            bid_levels[level_idx].order_ids.push_back(order.order_id);
+    // Define opening time (9:30:00)
+    const long long OPENING_TIME = 93000000;
+    bool market_opened = false;
+    
+    // Build a map of order applseqnum to immediate trades
+    std::map<int, bool> order_has_immediate_trade;
+    for (size_t i = 0; i < trades.size(); i++) {
+        if (trades[i].exectype == 'f') {
+            for (size_t j = 0; j < orders.size(); j++) {
+                if ((orders[j].applseqnum == trades[i].bidapplseqnum || 
+                     orders[j].applseqnum == trades[i].offerapplseqnum) &&
+                    abs(orders[j].transacttime - trades[i].transacttime) <= 1000) {
+                    order_has_immediate_trade[orders[j].applseqnum] = true;
+                }
+            }
+        }
+    }
+    
+    std::vector<Event> events;
+    
+    for (size_t i = 0; i < orders.size(); i++) {
+        Event e;
+        e.type = "order";
+        e.time = orders[i].transacttime;
+        e.index = i;
+        events.push_back(e);
+    }
+    
+    for (size_t i = 0; i < trades.size(); i++) {
+        Event e;
+        e.type = "trade";
+        e.time = trades[i].transacttime;
+        e.index = i;
+        events.push_back(e);
+    }
+    
+    std::sort(events.begin(), events.end(), compare_events);
+    
+    for (size_t i = 0; i < events.size(); i++) {
+        if (events[i].type == "order") {
+            const Order& order = orders[events[i].index];
+            
+            bool is_immediate_market_order = 
+                (order.ordertype == '1' || order.ordertype == 'u') && 
+                order_has_immediate_trade.count(order.applseqnum) > 0;
+            
+            if (order.transacttime < OPENING_TIME || !is_immediate_market_order) {
+                add_order(book, order);
+            }
+            
+            if (order.transacttime >= OPENING_TIME && !is_immediate_market_order) {
+                if (!market_opened) {
+                    std::cout << "Market opened! Taking first snapshot..." << std::endl;
+                    market_opened = true;
+                }
+                take_snapshot(book, order.clockatarrival, order.transacttime);
+            }
         } else {
-            // New price level, create and insert
-            OrderBookLevel new_level;
-            new_level.price = order.price;
-            new_level.total_volume = order.volume;
-            new_level.order_ids.push_back(order.order_id);
-            
-            // Insert at correct position (bid prices high to low)
-            int insert_pos = 0;
-            while (insert_pos < bid_levels.size() && 
-                   bid_levels[insert_pos].price > order.price) {
-                insert_pos++;
-            }
-            bid_levels.insert(bid_levels.begin() + insert_pos, new_level);
-        }
-    } else {  // Sell order
-        int level_idx = find_ask_level(order.price);
-        
-        if (level_idx >= 0) {
-            ask_levels[level_idx].total_volume += order.volume;
-            ask_levels[level_idx].order_ids.push_back(order.order_id);
-        } else {
-            OrderBookLevel new_level;
-            new_level.price = order.price;
-            new_level.total_volume = order.volume;
-            new_level.order_ids.push_back(order.order_id);
-            
-            // Insert at correct position (ask prices low to high)
-            int insert_pos = 0;
-            while (insert_pos < ask_levels.size() && 
-                   ask_levels[insert_pos].price < order.price) {
-                insert_pos++;
-            }
-            ask_levels.insert(ask_levels.begin() + insert_pos, new_level);
+            const Trade& trade = trades[events[i].index];
+            execute_trade(book, trade);
+            take_snapshot(book, trade.clockatarrival, trade.transacttime);
         }
     }
+    
+    std::ofstream out(output_file.c_str());
+    if (!out.is_open()) {
+        std::cerr << "Cannot create output file: " << output_file << std::endl;
+        return;
+    }
+    
+    out << "clockatarrival,transacttime,"
+        << "best_bid_1_price,best_bid_1_qty,best_bid_2_price,best_bid_2_qty,"
+        << "best_bid_3_price,best_bid_3_qty,best_bid_4_price,best_bid_4_qty,"
+        << "best_bid_5_price,best_bid_5_qty,"
+        << "best_ask_1_price,best_ask_1_qty,best_ask_2_price,best_ask_2_qty,"
+        << "best_ask_3_price,best_ask_3_qty,best_ask_4_price,best_ask_4_qty,"
+        << "best_ask_5_price,best_ask_5_qty,"
+        << "worst_bid_1_price,worst_bid_1_qty,worst_bid_2_price,worst_bid_2_qty,"
+        << "worst_bid_3_price,worst_bid_3_qty,worst_bid_4_price,worst_bid_4_qty,"
+        << "worst_bid_5_price,worst_bid_5_qty,"
+        << "worst_ask_1_price,worst_ask_1_qty,worst_ask_2_price,worst_ask_2_qty,"
+        << "worst_ask_3_price,worst_ask_3_qty,worst_ask_4_price,worst_ask_4_qty,"
+        << "worst_ask_5_price,worst_ask_5_qty,"
+        << "cvl,lpr,cto,nts,opx\n";
+    
+    for (size_t snap_idx = 0; snap_idx < book.snapshots.size(); snap_idx++) {
+        const BookSnapshot& snapshot = book.snapshots[snap_idx];
+        out << snapshot.clockatarrival << "," << snapshot.transacttime;
+        
+        for (int i = 0; i < 5; i++) {
+            if (i < (int)snapshot.best_bids.size()) {
+                out << "," << std::fixed << std::setprecision(2) 
+                    << snapshot.best_bids[i].first << "," << snapshot.best_bids[i].second;
+            } else {
+                out << ",,";
+            }
+        }
+        
+        for (int i = 0; i < 5; i++) {
+            if (i < (int)snapshot.best_asks.size()) {
+                out << "," << std::fixed << std::setprecision(2)
+                    << snapshot.best_asks[i].first << "," << snapshot.best_asks[i].second;
+            } else {
+                out << ",,";
+            }
+        }
+        
+        for (int i = 0; i < 5; i++) {
+            if (i < (int)snapshot.worst_bids.size()) {
+                out << "," << std::fixed << std::setprecision(2)
+                    << snapshot.worst_bids[i].first << "," << snapshot.worst_bids[i].second;
+            } else {
+                out << ",,";
+            }
+        }
+        
+        for (int i = 0; i < 5; i++) {
+            if (i < (int)snapshot.worst_asks.size()) {
+                out << "," << std::fixed << std::setprecision(2)
+                    << snapshot.worst_asks[i].first << "," << snapshot.worst_asks[i].second;
+            } else {
+                out << ",,";
+            }
+        }
+        
+        out << "," << snapshot.cvl
+            << "," << std::fixed << std::setprecision(2) << snapshot.lpr
+            << "," << snapshot.cto
+            << "," << snapshot.nts
+            << "," << std::fixed << std::setprecision(2) << snapshot.opx;
+        
+        out << "\n";
+    }
+    
+    out.close();
+    std::cout << "Order book snapshots saved to " << output_file << std::endl;
+    std::cout << "Total snapshots: " << book.snapshots.size() << std::endl;
 }
-
-// Process cancel order
-void process_cancel_order(const Order& order) {
-    int order_idx = find_active_order(order.order_id);
-    if (order_idx < 0) return;  // Order not found
-    
-    Order& active_order = active_orders[order_idx];
-    
-    if (active_order.direction == 'B') {  // Cancel buy order
-        int level_idx = find_bid_level(active_order.price);
-        if (level_idx >= 0) {
-            // Reduce volume
-            bid_levels[level_idx].total_volume -= active_order.volume;
-            
-            // Remove from order ID list
-            std::vector<long long>& ids = bid_levels[level_idx].order_ids;
-            for (int i = 0; i < ids.size(); i++) {
-                if (ids[i] == order.order_id) {
-                    ids.erase(ids.begin() + i);
-                    break;
-                }
-            }
-            
-            // Remove level if no orders left
-            if (bid_levels[level_idx].total_volume <= 0) {
-                bid_levels.erase(bid_levels.begin() + level_idx);
-            }
-        }
-    } else {  // Cancel sell order
-        int level_idx = find_ask_level(active_order.price);
-        if (level_idx >= 0) {
-            ask_levels[level_idx].total_volume -= active_order.volume;
-            
-            std::vector<long long>& ids = ask_levels[level_idx].order_ids;
-            for (int i = 0; i < ids.size(); i++) {
-                if (ids[i] == order.order_id) {
-                    ids.erase(ids.begin() + i);
-                    break;
-                }
-            }
-            
-            if (ask_levels[level_idx].total_volume <= 0) {
-                ask_levels.erase(ask_levels.begin() + level_idx);
-            }
-        }
-    }
-    
-    // Remove from active orders
-    active_orders.erase(active_orders.begin() + order_idx);
-}
-
-// Process trade
-void process_trade(const Trade& trade) {
-    // 1. Process buyer order
-    int bid_idx = find_active_order(trade.bid_order_id);
-    if (bid_idx >= 0) {
-        Order& bid_order = active_orders[bid_idx];
-        double order_price = bid_order.price;
-        
-        // First reduce volume in order book
-        int level_idx = find_bid_level(order_price);
-        if (level_idx >= 0) {
-            bid_levels[level_idx].total_volume -= trade.volume;
-            
-            // If order fully filled, remove from order_ids
-            if (bid_order.volume <= trade.volume) {
-                std::vector<long long>& ids = bid_levels[level_idx].order_ids;
-                for (int i = 0; i < ids.size(); i++) {
-                    if (ids[i] == trade.bid_order_id) {
-                        ids.erase(ids.begin() + i);
-                        break;
-                    }
-                }
-            }
-            
-            // Check if level should be removed
-            if (bid_levels[level_idx].total_volume <= 0) {
-                bid_levels.erase(bid_levels.begin() + level_idx);
-            }
-        }
-        
-        // Then update order volume
-        bid_order.volume -= trade.volume;
-        
-        // If fully filled, remove from active orders
-        if (bid_order.volume <= 0) {
-            active_orders.erase(active_orders.begin() + bid_idx);
-        }
-    }
-    
-    // 2. Process seller order
-    int ask_idx = find_active_order(trade.ask_order_id);
-    if (ask_idx >= 0) {
-        Order& ask_order = active_orders[ask_idx];
-        double order_price = ask_order.price;
-        
-        // First reduce volume in order book
-        int level_idx = find_ask_level(order_price);
-        if (level_idx >= 0) {
-            ask_levels[level_idx].total_volume -= trade.volume;
-            
-            // If order fully filled, remove from order_ids
-            if (ask_order.volume <= trade.volume) {
-                std::vector<long long>& ids = ask_levels[level_idx].order_ids;
-                for (int i = 0; i < ids.size(); i++) {
-                    if (ids[i] == trade.ask_order_id) {
-                        ids.erase(ids.begin() + i);
-                        break;
-                    }
-                }
-            }
-            
-            // Check if level should be removed
-            if (ask_levels[level_idx].total_volume <= 0) {
-                ask_levels.erase(ask_levels.begin() + level_idx);
-            }
-        }
-        
-        // Then update order volume
-        ask_order.volume -= trade.volume;
-        
-        // If fully filled, remove from active orders
-        if (ask_order.volume <= 0) {
-            active_orders.erase(active_orders.begin() + ask_idx);
-        }
-    }
-}
-
-// ========== 5. Order Book Rebuild Main Function ==========
-
-void rebuild_order_book() {
-    std::cout << "Starting order book rebuild..." << std::endl;
-    
-    // First process all orders
-    int add_count = 0, cancel_count = 0;
-    for (const Order& order : all_orders) {
-        try {
-            if (order.type == 'A') {
-                process_new_order(order);
-                add_count++;
-            } else if (order.type == 'C') {
-                process_cancel_order(order);
-                cancel_count++;
-            }
-        } catch (const std::exception& e) {
-            std::cout << "Error processing order " << order.order_id << ": " << e.what() << std::endl;
-        }
-    }
-    std::cout << "Processed " << add_count << " add orders, " << cancel_count << " cancel orders" << std::endl;
-    
-    // Then process all trades
-    int trade_count = 0;
-    for (const Trade& trade : all_trades) {
-        try {
-            process_trade(trade);
-            trade_count++;
-        } catch (const std::exception& e) {
-            std::cout << "Error processing trade: " << e.what() << std::endl;
-        }
-    }
-    std::cout << "Processed " << trade_count << " trades" << std::endl;
-    
-    std::cout << "Order book rebuild complete!" << std::endl;
-}
-
-// ========== 6. Display Order Book Function ==========
-
-void print_order_book(int max_levels = 5) {
-    std::cout << "\n======= Order Book Snapshot =======" << std::endl;
-    std::cout << std::fixed << std::setprecision(2);
-    
-    // Ask side (prices low to high)
-    std::cout << "\nASK (Sell Side):" << std::endl;
-    std::cout << "Price\t\tVolume\t\tOrders" << std::endl;
-    std::cout << "--------------------------------" << std::endl;
-    
-    int ask_count = std::min((int)ask_levels.size(), max_levels);
-    for (int i = 0; i < ask_count; i++) {
-        std::cout << ask_levels[i].price << "\t\t" 
-                  << ask_levels[i].total_volume << "\t\t"
-                  << ask_levels[i].order_ids.size() << std::endl;
-    }
-    
-    if (ask_levels.size() > max_levels) {
-        std::cout << "... " << (ask_levels.size() - max_levels) << " more ask levels" << std::endl;
-    }
-    
-    // Bid side (prices high to low)
-    std::cout << "\nBID (Buy Side):" << std::endl;
-    std::cout << "Price\t\tVolume\t\tOrders" << std::endl;
-    std::cout << "--------------------------------" << std::endl;
-    
-    int bid_count = std::min((int)bid_levels.size(), max_levels);
-    for (int i = 0; i < bid_count; i++) {
-        std::cout << bid_levels[i].price << "\t\t" 
-                  << bid_levels[i].total_volume << "\t\t"
-                  << bid_levels[i].order_ids.size() << std::endl;
-    }
-    
-    if (bid_levels.size() > max_levels) {
-        std::cout << "... " << (bid_levels.size() - max_levels) << " more bid levels" << std::endl;
-    }
-    
-    // Statistics
-    std::cout << "\nStatistics:" << std::endl;
-    std::cout << "Active orders: " << active_orders.size() << std::endl;
-    std::cout << "Bid levels: " << bid_levels.size() << std::endl;
-    std::cout << "Ask levels: " << ask_levels.size() << std::endl;
-    
-    // Best bid/ask
-    if (!bid_levels.empty() && !ask_levels.empty()) {
-        double bid_price = bid_levels[0].price;
-        double ask_price = ask_levels[0].price;
-        double spread = ask_price - bid_price;
-        
-        std::cout << "\nBest Quotes:" << std::endl;
-        std::cout << "Best Bid: " << bid_price << " (" << bid_levels[0].total_volume << " shares)" << std::endl;
-        std::cout << "Best Ask: " << ask_price << " (" << ask_levels[0].total_volume << " shares)" << std::endl;
-        std::cout << "Spread: " << spread << std::endl;
-    }
-}
-
-// ========== 7. Main Function ==========
 
 int main() {
-    // 1. Read data
-    // Try different possible paths
-    std::vector<std::string> paths_to_try = {
-        "orders.csv",           // Same directory as executable
-        "../orders.csv",        // One level up
-        "../../orders.csv",     // Two levels up
-        "../../../orders.csv",  // Three levels up
-        "../../../../orders.csv" // Four levels up
-    };
+    std::cout << "========== Order Book Reconstruction ==========" << std::endl;
     
-    bool found_orders = false;
-    for (const auto& path : paths_to_try) {
-        std::ifstream test(path);
+    std::vector<std::string> paths_to_try;
+    paths_to_try.push_back("order_new.csv");
+    paths_to_try.push_back("../order_new.csv");
+    paths_to_try.push_back("../../order_new.csv");
+    paths_to_try.push_back("../../../order_new.csv");
+    paths_to_try.push_back("../../../../order_new.csv");
+    
+    std::string order_path;
+    std::string trade_path;
+    std::string output_path;
+    
+    bool found = false;
+    for (size_t i = 0; i < paths_to_try.size(); i++) {
+        std::ifstream test(paths_to_try[i].c_str());
         if (test.good()) {
             test.close();
-            std::cout << "Found orders.csv at: " << path << std::endl;
-            read_order_file(path);
+            order_path = paths_to_try[i];
             
-            // Try trades.csv at same location
-            std::string trades_path = path;
-            size_t pos = trades_path.find("orders.csv");
+            trade_path = paths_to_try[i];
+            size_t pos = trade_path.find("order_new.csv");
             if (pos != std::string::npos) {
-                trades_path.replace(pos, 10, "trades.csv");
-                read_trade_file(trades_path);
+                trade_path.replace(pos, 13, "trade_new.csv");
             }
-            found_orders = true;
+            
+            output_path = paths_to_try[i];
+            pos = output_path.find("order_new.csv");
+            if (pos != std::string::npos) {
+                output_path.replace(pos, 13, "book_new.csv");
+            }
+            
+            std::cout << "Found files at: " << paths_to_try[i] << std::endl;
+            found = true;
             break;
         }
     }
     
-    if (!found_orders) {
-        std::cout << "ERROR: Could not find orders.csv in any of the expected locations!" << std::endl;
-        std::cout << "Please copy orders.csv and trades.csv to the same directory as the executable." << std::endl;
+    if (!found) {
+        std::cerr << "Error: Could not find order_new.csv in any expected location!" << std::endl;
         return 1;
     }
     
-    // Check if we have data
-    if (all_orders.empty()) {
-        std::cout << "ERROR: No orders were loaded!" << std::endl;
+    std::vector<Order> orders;
+    std::vector<Trade> trades;
+    
+    read_order_file(order_path, orders);
+    read_trade_file(trade_path, trades);
+    
+    if (orders.empty()) {
+        std::cerr << "Error: No orders loaded!" << std::endl;
         return 1;
     }
     
-    if (all_trades.empty()) {
-        std::cout << "WARNING: No trades were loaded!" << std::endl;
-    }
+    process_events(orders, trades, output_path);
     
-    // 2. Rebuild order book
-    rebuild_order_book();
-    
-    // 3. Display results
-    if (bid_levels.empty() && ask_levels.empty()) {
-        std::cout << "ERROR: Order book is empty after rebuild!" << std::endl;
-        return 1;
-    }
-    
-    print_order_book();
-    
-    // 4. Extra: Display first 5 active orders
-    std::cout << "\nFirst 5 Active Orders:" << std::endl;
-    std::cout << "ID\t\tDir\tPrice\tRemaining" << std::endl;
-    std::cout << "--------------------------------" << std::endl;
-    
-    int show_count = std::min(5, (int)active_orders.size());
-    for (int i = 0; i < show_count; i++) {
-        std::cout << active_orders[i].order_id << "\t" 
-                  << active_orders[i].direction << "\t"
-                  << active_orders[i].price << "\t"
-                  << active_orders[i].volume << std::endl;
-    }
+    std::cout << "Processing complete!" << std::endl;
+    std::cout << "Output saved to: " << output_path << std::endl;
     
     return 0;
 }
