@@ -1,0 +1,3 @@
+D:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/out/build/test_v1/CMakeFiles/test1.dir
+D:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/out/build/test_v1/CMakeFiles/ALL_BUILD.dir
+D:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/out/build/test_v1/CMakeFiles/ZERO_CHECK.dir
