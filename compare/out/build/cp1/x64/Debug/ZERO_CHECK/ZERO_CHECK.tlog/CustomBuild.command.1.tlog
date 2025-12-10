@@ -1,0 +1,10 @@
+^D:\ONEDRIVE - MAILS.TSINGHUA.EDU.CN\RESEARCH_PROJECT\CMAKE_LEARN\COMPARE\OUT\BUILD\CP1\CMAKEFILES\74EC37AAE16C0DCA2463D37C6600AAB7\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" "-SD:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/compare" "-BD:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/compare/out/build/cp1" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "D:/OneDrive - mails.tsinghua.edu.cn/research_project/cmake_learn/compare/out/build/cp1/comparecsv.sln"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

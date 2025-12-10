@@ -1,0 +1,53 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ALL_BUILD", "ALL_BUILD.vcxproj", "{90B734B3-2087-3B83-878C-D014D6C26971}"
+	ProjectSection(ProjectDependencies) = postProject
+		{746190AC-D179-3297-A77F-413A2D202F61} = {746190AC-D179-3297-A77F-413A2D202F61}
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF} = {03E58812-E835-3FF8-978E-85D8AEBB56AF}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZERO_CHECK", "ZERO_CHECK.vcxproj", "{746190AC-D179-3297-A77F-413A2D202F61}"
+	ProjectSection(ProjectDependencies) = postProject
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "comparecsv", "comparecsv.vcxproj", "{03E58812-E835-3FF8-978E-85D8AEBB56AF}"
+	ProjectSection(ProjectDependencies) = postProject
+		{746190AC-D179-3297-A77F-413A2D202F61} = {746190AC-D179-3297-A77F-413A2D202F61}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+		MinSizeRel|x64 = MinSizeRel|x64
+		RelWithDebInfo|x64 = RelWithDebInfo|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{90B734B3-2087-3B83-878C-D014D6C26971}.Debug|x64.ActiveCfg = Debug|x64
+		{90B734B3-2087-3B83-878C-D014D6C26971}.Release|x64.ActiveCfg = Release|x64
+		{90B734B3-2087-3B83-878C-D014D6C26971}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{90B734B3-2087-3B83-878C-D014D6C26971}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.Debug|x64.ActiveCfg = Debug|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.Debug|x64.Build.0 = Debug|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.Release|x64.ActiveCfg = Release|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.Release|x64.Build.0 = Release|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{746190AC-D179-3297-A77F-413A2D202F61}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.Debug|x64.ActiveCfg = Debug|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.Debug|x64.Build.0 = Debug|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.Release|x64.ActiveCfg = Release|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.Release|x64.Build.0 = Release|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.MinSizeRel|x64.ActiveCfg = MinSizeRel|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.MinSizeRel|x64.Build.0 = MinSizeRel|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.RelWithDebInfo|x64.ActiveCfg = RelWithDebInfo|x64
+		{03E58812-E835-3FF8-978E-85D8AEBB56AF}.RelWithDebInfo|x64.Build.0 = RelWithDebInfo|x64
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {BE225310-7712-3BE5-95BC-FFC45EBF9E3D}
+	EndGlobalSection
+	GlobalSection(ExtensibilityAddIns) = postSolution
+	EndGlobalSection
+EndGlobal
