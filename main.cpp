@@ -59,10 +59,28 @@ struct BookOrder {
     long long order_time;
 };
 
+// Bid order book
+struct BidBook {
+    std::map<int, BookOrder> orders;
+    double get_best_price() const;
+    void add_order(const BookOrder& order);
+    void remove_order(int applseqnum);
+    bool update_qty(int applseqnum, int qty_change);
+};
+
+// Ask order book
+struct AskBook {
+    std::map<int, BookOrder> orders;
+    double get_best_price() const;
+    void add_order(const BookOrder& order);
+    void remove_order(int applseqnum);
+    bool update_qty(int applseqnum, int qty_change);
+};
+
 // Order book structure
 struct OrderBook {
-    std::map<int, BookOrder> bids;
-    std::map<int, BookOrder> asks;
+    BidBook bid_book;
+    AskBook ask_book;
     std::vector<BookSnapshot> snapshots;
     
     // Market statistics
@@ -73,6 +91,74 @@ struct OrderBook {
     double opening_price;
     bool has_opening_price;
 };
+
+// BidBook implementations
+double BidBook::get_best_price() const {
+    if (orders.empty()) return 0;
+    double best = 0;
+    std::map<int, BookOrder>::const_iterator it;
+    for (it = orders.begin(); it != orders.end(); ++it) {
+        if (it->second.price > best) {
+            best = it->second.price;
+        }
+    }
+    return best;
+}
+
+void BidBook::add_order(const BookOrder& order) {
+    orders[order.applseqnum] = order;
+}
+
+void BidBook::remove_order(int applseqnum) {
+    orders.erase(applseqnum);
+}
+
+bool BidBook::update_qty(int applseqnum, int qty_change) {
+    std::map<int, BookOrder>::iterator it = orders.find(applseqnum);
+    if (it != orders.end()) {
+        it->second.qty += qty_change;
+        if (it->second.qty <= 0) {
+            orders.erase(it);
+            return true;
+        }
+        return false;
+    }
+    return true;
+}
+
+// AskBook implementations
+double AskBook::get_best_price() const {
+    if (orders.empty()) return 0;
+    double best = 1e9;
+    std::map<int, BookOrder>::const_iterator it;
+    for (it = orders.begin(); it != orders.end(); ++it) {
+        if (it->second.price < best) {
+            best = it->second.price;
+        }
+    }
+    return best == 1e9 ? 0 : best;
+}
+
+void AskBook::add_order(const BookOrder& order) {
+    orders[order.applseqnum] = order;
+}
+
+void AskBook::remove_order(int applseqnum) {
+    orders.erase(applseqnum);
+}
+
+bool AskBook::update_qty(int applseqnum, int qty_change) {
+    std::map<int, BookOrder>::iterator it = orders.find(applseqnum);
+    if (it != orders.end()) {
+        it->second.qty += qty_change;
+        if (it->second.qty <= 0) {
+            orders.erase(it);
+            return true;
+        }
+        return false;
+    }
+    return true;
+}
 
 // Event structure
 struct Event {
@@ -93,30 +179,12 @@ void init_orderbook(OrderBook& book) {
 
 // Get best bid price
 double get_best_bid_price(const OrderBook& book) {
-    if (book.bids.empty()) return 0;
-    double best = 0;
-    
-    std::map<int, BookOrder>::const_iterator it;
-    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
-        if (it->second.price > best) {
-            best = it->second.price;
-        }
-    }
-    return best;
+    return book.bid_book.get_best_price();
 }
 
 // Get best ask price
 double get_best_ask_price(const OrderBook& book) {
-    if (book.asks.empty()) return 0;
-    double best = 1e9;
-    
-    std::map<int, BookOrder>::const_iterator it;
-    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
-        if (it->second.price < best) {
-            best = it->second.price;
-        }
-    }
-    return best == 1e9 ? 0 : best;
+    return book.ask_book.get_best_price();
 }
 
 // Add order to book
@@ -166,9 +234,9 @@ void add_order(OrderBook& book, const Order& order) {
     
     // Add to order book
     if (order.side == 1) {
-        book.bids[order.applseqnum] = book_order;
+        book.bid_book.add_order(book_order);
     } else {
-        book.asks[order.applseqnum] = book_order;
+        book.ask_book.add_order(book_order);
     }
 }
 
@@ -196,30 +264,18 @@ void execute_trade(OrderBook& book, const Trade& trade) {
         
         // Update order book
         if (trade.bidapplseqnum != 0) {
-            std::map<int, BookOrder>::iterator it = book.bids.find(trade.bidapplseqnum);
-            if (it != book.bids.end()) {
-                it->second.qty -= trade.tradeqty;
-                if (it->second.qty <= 0) {
-                    book.bids.erase(it);
-                }
-            }
+            book.bid_book.update_qty(trade.bidapplseqnum, -trade.tradeqty);
         }
         
         if (trade.offerapplseqnum != 0) {
-            std::map<int, BookOrder>::iterator it = book.asks.find(trade.offerapplseqnum);
-            if (it != book.asks.end()) {
-                it->second.qty -= trade.tradeqty;
-                if (it->second.qty <= 0) {
-                    book.asks.erase(it);
-                }
-            }
+            book.ask_book.update_qty(trade.offerapplseqnum, -trade.tradeqty);
         }
     } else if (trade.exectype == '4') {  // Cancelled
         if (trade.bidapplseqnum != 0) {
-            book.bids.erase(trade.bidapplseqnum);
+            book.bid_book.remove_order(trade.bidapplseqnum);
         }
         if (trade.offerapplseqnum != 0) {
-            book.asks.erase(trade.offerapplseqnum);
+            book.ask_book.remove_order(trade.offerapplseqnum);
         }
     }
 }
@@ -239,7 +295,7 @@ std::vector<std::pair<double, int> > get_top_bids(const OrderBook& book, int n) 
     std::map<double, int> price_levels;
     std::map<int, BookOrder>::const_iterator it;
     
-    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
+    for (it = book.bid_book.orders.begin(); it != book.bid_book.orders.end(); ++it) {
         price_levels[it->second.price] += it->second.qty;
     }
     
@@ -262,7 +318,7 @@ std::vector<std::pair<double, int> > get_top_asks(const OrderBook& book, int n) 
     std::map<double, int> price_levels;
     std::map<int, BookOrder>::const_iterator it;
     
-    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
+    for (it = book.ask_book.orders.begin(); it != book.ask_book.orders.end(); ++it) {
         price_levels[it->second.price] += it->second.qty;
     }
     
@@ -285,7 +341,7 @@ std::vector<std::pair<double, int> > get_bottom_bids(const OrderBook& book, int 
     std::map<double, int> price_levels;
     std::map<int, BookOrder>::const_iterator it;
     
-    for (it = book.bids.begin(); it != book.bids.end(); ++it) {
+    for (it = book.bid_book.orders.begin(); it != book.bid_book.orders.end(); ++it) {
         price_levels[it->second.price] += it->second.qty;
     }
     
@@ -308,7 +364,7 @@ std::vector<std::pair<double, int> > get_bottom_asks(const OrderBook& book, int 
     std::map<double, int> price_levels;
     std::map<int, BookOrder>::const_iterator it;
     
-    for (it = book.asks.begin(); it != book.asks.end(); ++it) {
+    for (it = book.ask_book.orders.begin(); it != book.ask_book.orders.end(); ++it) {
         price_levels[it->second.price] += it->second.qty;
     }
     

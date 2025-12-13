@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.10.0)
+project(test1 VERSION 0.1.0 LANGUAGES C CXX)
+
+add_executable(test1 main.cpp)
+
+# Optional: help catch "runs fine yesterday, crashes today" undefined behavior.
+# Enable with: cmake -DENABLE_SANITIZERS=ON ...
+option(ENABLE_SANITIZERS "Enable AddressSanitizer/UndefinedBehaviorSanitizer (GCC/Clang)" OFF)
+if(ENABLE_SANITIZERS AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU"))
+  target_compile_options(test1 PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(test1 PRIVATE -fsanitize=address,undefined)
+endif()
+
